@@ -34,7 +34,7 @@ analyzer = SentimentIntensityAnalyzer()
 # like if the file doesn't exist.
 try:
     # We only load the 'text' column since that's all we need.
-    df = pd.read_csv('Tweets.csv', usecols=['text'])
+    df = pd.read_csv('Tweets.csv', usecols=['name','text'])
 except FileNotFoundError:
     print("Error: Tweets.csv not found. Make sure it's in the 'backend' directory.")
     # If the file isn't found, we exit the program.
@@ -70,39 +70,49 @@ def read_root():
     return {"message": "Welcome to the Sentiment Analysis API. Use the /analyze endpoint."}
 
 # This decorator handles GET requests to the "/analyze" URL.
+# In backend/main.py, find and REPLACE the entire analyze_tweets function
+
 @app.get("/analyze")
 def analyze_tweets(query: str):
     """
-    This endpoint finds tweets containing a query, analyzes them,
-    and returns the sentiment counts.
-    'query: str' tells FastAPI to expect a URL parameter named 'query'.
-    e.g., http://.../analyze?query=some_word
+    This endpoint now returns a list of tweet objects,
+    each containing the author's name and the tweet text.
     """
     if not query:
         return {"error": "Query parameter cannot be empty."}
 
-    # We filter our DataFrame to get rows where the 'text' column contains the query.
-    # .fillna('') handles any empty tweet text, and case=False makes the search case-insensitive.
+    # The 'name' column is now loaded, so we can use it.
     filtered_tweets = df[df['text'].fillna('').str.contains(query, case=False)]
-    
-    tweet_texts = filtered_tweets['text'].tolist()
+
+    tweet_sample = filtered_tweets.head(200)
+
+    # This is the key change: Convert the pandas DataFrame slice
+    # into a list of dictionaries (records).
+    tweet_objects = tweet_sample.to_dict('records')
+
+    # We need the texts for analysis
+    tweet_texts = [tweet['text'] for tweet in tweet_objects]
 
     if not tweet_texts:
-        return {"query": query, "results": {}, "message": "No tweets found for this query."}
+        return {
+            "query": query,
+            "total_tweets_found": 0,
+            "results": {"positive": 0, "negative": 0, "neutral": 0},
+            "tweets": []
+        }
 
-    # We use our analyze_sentiment function on each tweet found.
     sentiments = [analyze_sentiment(tweet) for tweet in tweet_texts]
 
-    # We count the results to create a summary.
     sentiment_counts = {
         "positive": sentiments.count('positive'),
         "negative": sentiments.count('negative'),
         "neutral": sentiments.count('neutral')
     }
 
-    # We return the final JSON response.
+    # The 'tweets' key now contains our list of objects.
     return {
         "query": query,
-        "total_tweets_found": len(tweet_texts),
-        "results": sentiment_counts
+        "total_tweets_found": len(filtered_tweets),
+        "results": sentiment_counts,
+        "tweets": tweet_objects 
     }
