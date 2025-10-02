@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import re 
 
 # --- Part 2: Initial Setup ---
 # This line creates our main web application instance.
@@ -72,44 +73,55 @@ def read_root():
 # This decorator handles GET requests to the "/analyze" URL.
 # In backend/main.py, find and REPLACE the entire analyze_tweets function
 
+# Add this new helper function above your analyze_tweets function
+def get_sentence_with_keyword(text, keyword):
+    # A simple way to split text into sentences
+    sentences = re.split(r'[.!?]', text)
+    for sentence in sentences:
+        # Find the sentence that contains the keyword (case-insensitive)
+        if re.search(rf'\b{re.escape(keyword)}\b', sentence, re.IGNORECASE):
+            return sentence
+    # If no specific sentence is found (e.g., tweet is one sentence), return the whole text
+    return text
+
+# Now, replace your existing analyze_tweets function with this final, most intelligent version
 @app.get("/analyze")
 def analyze_tweets(query: str):
     """
-    This endpoint now returns a list of tweet objects,
-    each containing the author's name and the tweet text.
+    Final version: Uses whole-word matching for search and
+    sentence-level analysis for more accurate sentiment.
     """
     if not query:
         return {"error": "Query parameter cannot be empty."}
 
-    # The 'name' column is now loaded, so we can use it.
-    filtered_tweets = df[df['text'].fillna('').str.contains(query, case=False)]
-
+    # 1. Use regex for whole-word matching
+    filtered_tweets = df[df['text'].fillna('').str.contains(rf'\b{re.escape(query)}\b', case=False, regex=True)]
+    
     tweet_sample = filtered_tweets.head(200)
-
-    # This is the key change: Convert the pandas DataFrame slice
-    # into a list of dictionaries (records).
     tweet_objects = tweet_sample.to_dict('records')
+    
+    sentiments_for_count = []
+    for tweet in tweet_objects:
+        # 2. Analyze sentiment on the relevant sentence, not the whole tweet
+        relevant_text = get_sentence_with_keyword(tweet['text'], query)
+        sentiment = analyze_sentiment(relevant_text)
+        
+        tweet['sentiment'] = sentiment
+        sentiments_for_count.append(sentiment)
 
-    # We need the texts for analysis
-    tweet_texts = [tweet['text'] for tweet in tweet_objects]
-
-    if not tweet_texts:
+    if not tweet_objects:
         return {
-            "query": query,
-            "total_tweets_found": 0,
+            "query": query, "total_tweets_found": 0,
             "results": {"positive": 0, "negative": 0, "neutral": 0},
             "tweets": []
         }
 
-    sentiments = [analyze_sentiment(tweet) for tweet in tweet_texts]
-
     sentiment_counts = {
-        "positive": sentiments.count('positive'),
-        "negative": sentiments.count('negative'),
-        "neutral": sentiments.count('neutral')
+        "positive": sentiments_for_count.count('positive'),
+        "negative": sentiments_for_count.count('negative'),
+        "neutral": sentiments_for_count.count('neutral')
     }
 
-    # The 'tweets' key now contains our list of objects.
     return {
         "query": query,
         "total_tweets_found": len(filtered_tweets),
