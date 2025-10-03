@@ -4,7 +4,7 @@ import pandas as pd
 import re
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import pipeline # <-- NEW: Import the Hugging Face pipeline
+from transformers import pipeline
 
 # --- Model Loading ---
 # This loads a model specifically fine-tuned for Aspect-Based Sentiment Analysis.
@@ -33,12 +33,8 @@ except FileNotFoundError:
     print("Error: Tweets.csv not found.")
     exit()
 
-# This is the new sentiment analysis function using our powerful model
+
 def analyze_sentiment_for_aspect(text, aspect):
-    """
-    Analyzes the sentiment of a text with respect to a specific aspect.
-    """
-    # The model expects the input in a specific format: "[CLS] text [SEP] aspect [SEP]"
     result = sentiment_analyzer(f"[CLS] {text} [SEP] {aspect} [SEP]")[0]
     # The model returns 'positive', 'negative', 'neutral'. We'll map it to our format.
     return result['label'].lower()
@@ -47,13 +43,10 @@ def analyze_sentiment_for_aspect(text, aspect):
 # --- API Endpoint ---
 @app.get("/analyze")
 def analyze_tweets(query: str):
-    """
-    Final version: Uses a transformer model for true Aspect-Based Sentiment Analysis.
-    """
     if not query:
         return {"error": "Query parameter cannot be empty."}
 
-    # Use regex for whole-word matching to find relevant tweets
+    # regex for whole-word matching to find relevant tweets
     filtered_tweets = df[df['text'].fillna('').str.contains(rf'\b{re.escape(query)}\b', case=False, regex=True)]
     
     tweet_sample = filtered_tweets.head(200)

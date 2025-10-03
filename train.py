@@ -15,7 +15,7 @@ from sklearn.ensemble import RandomForestClassifier # <-- NEW MODEL IMPORT
 from sklearn.metrics import accuracy_score, classification_report
 from imblearn.over_sampling import SMOTE
 
-# --- Text Preprocessing (unchanged) ---
+
 def preprocess_text(text):
     try:
         stop_words = set(stopwords.words('english'))
@@ -29,7 +29,7 @@ def preprocess_text(text):
     tokens = [word for word in tokens if word not in stop_words]
     return ' '.join(tokens)
 
-# --- Experiment Logging (unchanged) ---
+
 def log_experiment(run_id, model_type, params, metrics):
     log_file = 'training_log.csv'
     if not os.path.exists(log_file):
@@ -47,13 +47,13 @@ def log_experiment(run_id, model_type, params, metrics):
         ])
     print(f"Results for run {run_id} logged to {log_file}")
 
-# --- Main Training Function ---
+
 def train_model():
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"RUN ID: {run_id}")
     print("Starting model training process...")
 
-    # Steps 1-4 are unchanged
+    
     df = pd.read_csv('Tweets.csv')
     df = df[['text', 'airline_sentiment']]
     df = df[df['airline_sentiment'] != 'neutral']
@@ -67,10 +67,10 @@ def train_model():
     smote = SMOTE(random_state=42)
     X_train_smote, y_train_smote = smote.fit_resample(X_train_tfidf, y_train)
 
-    # --- Step 5: Train the NEW Model ---
+    
     print("Step 5: Training and tuning the RandomForestClassifier model...")
     
-    # Define the model and the grid of parameters to search
+    
     model_type = "RandomForest"
     rfc = RandomForestClassifier(random_state=42)
     param_grid = {
@@ -78,14 +78,14 @@ def train_model():
         'max_depth': [10, 20, None] # Maximum depth of the trees
     }
     
-    # Use GridSearchCV to find the best combination of parameters
+    # GridSearchCV 
     grid_search = GridSearchCV(estimator=rfc, param_grid=param_grid, cv=3, n_jobs=-1, verbose=2)
     grid_search.fit(X_train_smote, y_train_smote)
     
     best_model = grid_search.best_estimator_
     print(f"Best RandomForest parameters: {grid_search.best_params_}")
 
-    # --- Steps 6, 7, 8 are updated to use the new model ---
+    
     print("\nStep 6: Evaluating the best model...")
     y_pred = best_model.predict(X_test_tfidf)
     accuracy = accuracy_score(y_test, y_pred)
