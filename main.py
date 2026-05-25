@@ -2,79 +2,290 @@
 
 import pandas as pd
 import re
-from fastapi import FastAPI
+import os
+import traceback
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from transformers import pipeline
+from pydantic import BaseModel, Field, validator
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from logger import setup_logger
 
-# --- Model Loading ---
-# This loads a model specifically fine-tuned for Aspect-Based Sentiment Analysis.
-# The first time you run this, it will download the model (it may take a few minutes).
-print("Loading Aspect-Based Sentiment Analysis model...")
-sentiment_analyzer = pipeline("text-classification", model="yangheng/deberta-v3-base-absa-v1.1")
-print("Model loaded successfully.")
+# --- Logging Setup ---
+logger = setup_logger()
+
+# --- Global variables ---
+sentiment_analyzer = None
+df = None
+
+
+def load_model():
+    """Load the sentiment analysis model (lazy loading)."""
+    global sentiment_analyzer
+    if sentiment_analyzer is None:
+        model_path = 'sentiment_model.joblib'
+        vectorizer_path = 'tfidf_vectorizer.joblib'
+        
+        # Check if custom model exists
+        if os.path.exists(model_path) and os.path.exists(vectorizer_path):
+            logger.info(f"Loading custom model from {model_path}...")
+            try:
+                import joblib
+                model = joblib.load(model_path)
+                vectorizer = joblib.load(vectorizer_path)
+                
+                # Create a wrapper to match the pipeline interface
+                class CustomAnalyzer:
+                    def __init__(self, model, vectorizer):
+                        self.model = model
+                        self.vectorizer = vectorizer
+                    
+                    def __call__(self, text):
+                        # Handle pipeline input format (remove [CLS] etc if present)
+                        if isinstance(text, str):
+                            clean_text = text.replace('[CLS] ', '').replace(' [SEP]', '').split(' [SEP] ')[0]
+                            # Preprocess using the same logic as training would be ideal, 
+                            # but for now we rely on the vectorizer's preprocessing
+                            features = self.vectorizer.transform([clean_text])
+                            prediction = self.model.predict(features)[0]
+                            return [{'label': prediction}]
+                            
+                sentiment_analyzer = CustomAnalyzer(model, vectorizer)
+                logger.info("Custom model loaded successfully.")
+                return sentiment_analyzer
+            except Exception as e:
+                logger.error(f"Failed to load custom model: {e}. Falling back to Hugging Face model.")
+        
+        # Fallback to Hugging Face model
+        logger.info("Loading Aspect-Based Sentiment Analysis model (Hugging Face)...")
+        # Use slow tokenizer to avoid tiktoken compatibility issues
+        sentiment_analyzer = pipeline(
+            "text-classification", 
+            model="yangheng/deberta-v3-base-absa-v1.1",
+            tokenizer="yangheng/deberta-v3-base-absa-v1.1",
+            use_fast=False
+        )
+        logger.info("Hugging Face model loaded successfully.")
+    return sentiment_analyzer
+
+
+def load_data():
+    """Load the tweets dataset (lazy loading)."""
+    global df
+    if df is None:
+        try:
+            df = pd.read_csv('Tweets.csv', usecols=['name', 'text'])
+            logger.info(f"Loaded {len(df)} tweets from Tweets.csv")
+        except FileNotFoundError:
+            logger.error("Tweets.csv not found!")
+            raise RuntimeError("Data file not found. Please ensure Tweets.csv exists in the backend directory.")
+    return df
 
 
 # --- FastAPI App Setup ---
-app = FastAPI()
+app = FastAPI(
+    title="Sentiment Analysis API",
+    description="Aspect-based sentiment analysis for tweets",
+    version="2.0.0"
+)
 
-origins = ["http://localhost:5173"]
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS
+origins = ["http://localhost:5173", "http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=[" *"],
 )
 
-# --- Data Loading ---
-try:
-    df = pd.read_csv('Tweets.csv', usecols=['name', 'text'])
-except FileNotFoundError:
-    print("Error: Tweets.csv not found.")
-    exit()
+
+# --- Pydantic Models ---
+class AnalysisRequest(BaseModel):
+    """Request model for sentiment analysis."""
+    query: str = Field(..., min_length=1, max_length=100, description="Search query/keyword")
+    
+    @validator('query')
+    def validate_query(cls, v):
+        """Validate and sanitize query input."""
+        # Remove leading/trailing whitespace
+        v = v.strip()
+        
+        # Check not empty after strip
+        if not v:
+            raise ValueError('Query cannot be empty')
+        
+        # Basic SQL injection prevention
+        dangerous_patterns = [';', '--', '/*', '*/', 'DROP', 'DELETE', 'INSERT', 'UPDATE']
+        v_upper = v.upper()
+        if any(pattern in v_upper for pattern in dangerous_patterns):
+            raise ValueError('Invalid characters detected in query')
+        
+        return v
 
 
-def analyze_sentiment_for_aspect(text, aspect):
-    result = sentiment_analyzer(f"[CLS] {text} [SEP] {aspect} [SEP]")[0]
-    # The model returns 'positive', 'negative', 'neutral'. We'll map it to our format.
+class AnalysisResponse(BaseModel):
+    """Response model for sentiment analysis."""
+    query: str
+    total_tweets_found: int
+    results: dict
+    tweets: list
+
+
+# --- Helper Functions ---
+def analyze_sentiment_for_aspect(text: str, aspect: str) -> str:
+    """
+    Analyze sentiment of text regarding a specific aspect.
+    
+    Uses DeBERTa-v3 model fine-tuned for aspect-based sentiment analysis.
+    
+    Args:
+        text: Tweet text to analyze
+        aspect: The aspect/keyword to analyze sentiment about
+        
+    Returns:
+        Sentiment label ('positive', 'negative', or 'neutral')
+        
+    Example:
+        >>> analyze_sentiment_for_aspect("Great flight!", "flight")
+        'positive'
+    """
+    analyzer = load_model()
+    result = analyzer(f"[CLS] {text} [SEP] {aspect} [SEP]")[0]
     return result['label'].lower()
 
 
-# --- API Endpoint ---
-@app.get("/analyze")
-def analyze_tweets(query: str):
-    if not query:
-        return {"error": "Query parameter cannot be empty."}
+# --- API Endpoints ---
+@app.on_event("startup")
+async def startup_event():
+    """Log application startup and load resources."""
+    logger.info("Application starting...")
+    # Load model and data on startup
+    load_model()
+    load_data()
+    logger.info("Application started successfully")
 
-    # regex for whole-word matching to find relevant tweets
-    filtered_tweets = df[df['text'].fillna('').str.contains(rf'\b{re.escape(query)}\b', case=False, regex=True)]
+
+@app.get("/health")
+def health_check():
+    """
+    Health check endpoint for monitoring.
     
-    tweet_sample = filtered_tweets.head(200)
-    tweet_objects = tweet_sample.to_dict('records')
+    Returns:
+        dict: Service health status
+    """
+    data = load_data()
+    model_type = "custom" if hasattr(sentiment_analyzer, 'vectorizer') else "huggingface" if sentiment_analyzer else "none"
     
-    sentiments_for_count = []
-    for tweet in tweet_objects:
-        # For each tweet, analyze the sentiment ABOUT our search query
-        sentiment = analyze_sentiment_for_aspect(tweet['text'], query)
-        tweet['sentiment'] = sentiment
-        sentiments_for_count.append(sentiment)
-
-    if not tweet_objects:
-        return {
-            "query": query, "total_tweets_found": 0,
-            "results": {"positive": 0, "negative": 0, "neutral": 0},
-            "tweets": []
-        }
-
-    sentiment_counts = {
-        "positive": sentiments_for_count.count('positive'),
-        "negative": sentiments_for_count.count('negative'),
-        "neutral": sentiments_for_count.count('neutral')
-    }
-
     return {
-        "query": query,
-        "total_tweets_found": len(filtered_tweets),
-        "results": sentiment_counts,
-        "tweets": tweet_objects 
+        "status": "healthy",
+        "model_loaded": sentiment_analyzer is not None,
+        "model_type": model_type,
+        "data_loaded": data is not None,
+        "total_tweets": len(data) if data is not None else 0
     }
+
+
+@app.get("/analyze", response_model=AnalysisResponse)
+@limiter.limit("60/minute")
+def analyze_tweets(request: Request, query: str):
+    """
+    Analyze sentiment of tweets containing the specified query.
+    
+    Args:
+        request: FastAPI request object (for rate limiting)
+        query: Search keyword/phrase
+        
+    Returns:
+        AnalysisResponse: Sentiment analysis results
+        
+    Raises:
+        HTTPException: 400 for invalid input, 500 for server errors
+    """
+    try:
+        # Validate input
+        request_obj = AnalysisRequest(query=query)
+        validated_query = request_obj.query
+        
+        logger.info(f"Analysis request received: query='{validated_query}'")
+        
+        # Load data
+        data = load_data()
+        
+        # Filter tweets containing the query
+        filtered_tweets = data[
+            data['text'].fillna('').str.contains(
+                rf'\b{re.escape(validated_query)}\b', 
+                case=False, 
+                regex=True
+            )
+        ]
+        
+        total_found = len(filtered_tweets)
+        
+        # Handle no results
+        if total_found == 0:
+            logger.warning(f"No tweets found for query: '{validated_query}'")
+            return AnalysisResponse(
+                query=validated_query,
+                total_tweets_found=0,
+                results={"positive": 0, "negative": 0, "neutral": 0},
+                tweets=[]
+            )
+        
+        # Sample tweets (max 200)
+        tweet_sample = filtered_tweets.head(200)
+        tweet_objects = tweet_sample.to_dict('records')
+        
+        # Analyze sentiment for each tweet
+        sentiments_for_count = []
+        for tweet in tweet_objects:
+            try:
+                sentiment = analyze_sentiment_for_aspect(tweet['text'], validated_query)
+                tweet['sentiment'] = sentiment
+                sentiments_for_count.append(sentiment)
+            except Exception as e:
+                logger.error(f"Error analyzing individual tweet: {e}")
+                # Default to neutral on error
+                tweet['sentiment'] = 'neutral'
+                sentiments_for_count.append('neutral')
+        
+        # Count sentiments
+        sentiment_counts = {
+            "positive": sentiments_for_count.count('positive'),
+            "negative": sentiments_for_count.count('negative'),
+            "neutral": sentiments_for_count.count('neutral')
+        }
+        
+        logger.info(
+            f"Analysis complete: query='{validated_query}', "
+            f"found={total_found}, analyzed={len(tweet_objects)}, "
+            f"results={sentiment_counts}"
+        )
+        
+        return AnalysisResponse(
+            query=validated_query,
+            total_tweets_found=total_found,
+            results=sentiment_counts,
+            tweets=tweet_objects
+        )
+        
+    except ValueError as e:
+        # Validation errors (400 Bad Request)
+        logger.warning(f"Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    except Exception as e:
+        # Unexpected errors (500 Internal Server Error)
+        logger.error(f"Unexpected error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail="An internal error occurred. Please try again later."
+        )

@@ -1,0 +1,9 @@
+2026-05-11 16:36:14,045 - sentiment_api - INFO - Application starting...
+2026-05-11 16:36:14,045 - sentiment_api - INFO - Loading custom model from sentiment_model.joblib...
+2026-05-11 16:36:14,321 - sentiment_api - INFO - Custom model loaded successfully.
+2026-05-11 16:36:14,361 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
+2026-05-11 16:36:14,361 - sentiment_api - INFO - Application started successfully
+2026-05-11 16:37:05,115 - sentiment_api - INFO - Analysis request received: query='virgin'
+2026-05-11 16:37:05,172 - sentiment_api - INFO - Analysis complete: query='virgin', found=29, analyzed=29, results={'positive': 25, 'negative': 4, 'neutral': 0}
+2026-05-11 17:21:20,103 - sentiment_api - INFO - Analysis request received: query='united'
+2026-05-11 17:21:20,391 - sentiment_api - INFO - Analysis complete: query='united', found=3882, analyzed=200, results={'positive': 18, 'negative': 182, 'neutral': 0}
