@@ -3,3 +3,41 @@
 2026-05-25 16:01:49,577 - sentiment_api - INFO - Custom model loaded successfully.
 2026-05-25 16:01:49,629 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
 2026-05-25 16:01:49,629 - sentiment_api - INFO - Application started successfully
+2026-05-25 16:05:46,587 - sentiment_api - INFO - Application starting...
+2026-05-25 16:05:46,588 - sentiment_api - INFO - Loading custom model from sentiment_model.joblib...
+2026-05-25 16:05:46,663 - sentiment_api - INFO - Custom model loaded successfully.
+2026-05-25 16:05:46,704 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
+2026-05-25 16:05:46,704 - sentiment_api - INFO - Application started successfully
+2026-05-25 16:20:09,918 - sentiment_api - INFO - Application starting...
+2026-05-25 16:20:09,918 - sentiment_api - INFO - Loading custom model from sentiment_model.joblib...
+2026-05-25 16:20:10,030 - sentiment_api - INFO - Custom model loaded successfully.
+2026-05-25 16:20:10,106 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
+2026-05-25 16:20:10,106 - sentiment_api - INFO - Application started successfully
+2026-05-25 16:21:08,749 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:24:14,765 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:28:56,385 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:34:04,579 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:34:26,849 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:34:47,006 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:35:01,274 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:35:46,957 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:36:04,116 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:36:15,847 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:37:22,986 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:37:31,708 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:53:50,667 - sentiment_api - INFO - Application starting...
+2026-05-25 16:53:50,668 - sentiment_api - INFO - Loading Aspect-Based Sentiment Analysis model (Hugging Face)...
+2026-05-25 16:53:51,720 - sentiment_api - INFO - Hugging Face model loaded successfully.
+2026-05-25 16:53:51,754 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
+2026-05-25 16:53:51,755 - sentiment_api - INFO - Application started successfully
+2026-05-25 16:54:14,154 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:54:45,786 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:54:55,962 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:55:03,113 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:55:15,259 - sentiment_api - INFO - CRM prediction request received.
+2026-05-25 16:55:31,917 - sentiment_api - INFO - Application starting...
+2026-05-25 16:55:31,917 - sentiment_api - INFO - Loading custom model from sentiment_model.joblib...
+2026-05-25 16:55:31,991 - sentiment_api - INFO - Custom model loaded successfully.
+2026-05-25 16:55:32,031 - sentiment_api - INFO - Loaded 14640 tweets from Tweets.csv
+2026-05-25 16:55:32,031 - sentiment_api - INFO - Application started successfully
+2026-05-25 16:55:36,102 - sentiment_api - INFO - CRM prediction request received.

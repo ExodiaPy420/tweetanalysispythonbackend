@@ -130,6 +130,14 @@ class AnalysisRequest(BaseModel):
         
         return v
 
+class ReviewRequest(BaseModel):
+    """Request model for single CRM review sentiment analysis."""
+    text: str = Field(..., min_length=1, description="The feedback review text to analyze")
+
+class ReviewResponse(BaseModel):
+    """Response model returning a strict sentiment label."""
+    sentiment: str
+
 
 class AnalysisResponse(BaseModel):
     """Response model for sentiment analysis."""
@@ -288,4 +296,42 @@ def analyze_tweets(request: Request, query: str):
         raise HTTPException(
             status_code=500, 
             detail="An internal error occurred. Please try again later."
+        )
+
+@app.post("/predict_review", response_model=ReviewResponse)
+def predict_review(request_data: ReviewRequest):
+    """
+    Evaluate a single review text and return its sentiment label.
+    Designed for external CRM inter-service communication.
+    """
+    try:
+        logger.info("CRM prediction request received.")
+        
+        # 1. Load the model (returns CustomAnalyzer wrapper or HF Pipeline)
+        analyzer = load_model()
+        
+        # 2. Pass the text directly into the prediction flow
+        # Note: If the HF ABSA model complains about missing aspect tokens in the future, 
+        # you can format it here like: f"[CLS] {request_data.text} [SEP] general [SEP]"
+        raw_result = analyzer(request_data.text)
+        
+        # 3. Extract the label from the returned array structure (e.g., [{'label': 'positive'}])
+        raw_label = raw_result[0]['label']
+        
+        # 4. Enforce strict capitalization ("Positive", "Negative", "Neutral")
+        sentiment_label = raw_label.strip().capitalize()
+        
+        # Safety enforcement
+        valid_labels = ["Positive", "Negative", "Neutral"]
+        if sentiment_label not in valid_labels:
+            logger.warning(f"Unexpected label '{sentiment_label}' mapped to Neutral.")
+            sentiment_label = "Neutral"
+            
+        return ReviewResponse(sentiment=sentiment_label)
+        
+    except Exception as e:
+        logger.error(f"Error predicting CRM review sentiment: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail="An internal error occurred during prediction."
         )
