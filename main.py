@@ -12,6 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from logger import setup_logger
+from deep_translator import GoogleTranslator
 
 # --- Logging Setup ---
 logger = setup_logger()
@@ -19,6 +20,7 @@ logger = setup_logger()
 # --- Global variables ---
 sentiment_analyzer = None
 df = None
+hf_fallback_cache = None
 
 
 def load_model():
@@ -135,8 +137,10 @@ class ReviewRequest(BaseModel):
     text: str = Field(..., min_length=1, description="The feedback review text to analyze")
 
 class ReviewResponse(BaseModel):
-    """Response model returning a strict sentiment label."""
+    """Response model returning a strict sentiment label and observability metrics."""
     sentiment: str
+    model_used: str = Field(..., description="The name of the ML model that generated this prediction")
+    confidence_score: float = Field(..., description="The probability/confidence score of the prediction (0.0 to 1.0)")
 
 
 class AnalysisResponse(BaseModel):
@@ -301,37 +305,113 @@ def analyze_tweets(request: Request, query: str):
 @app.post("/predict_review", response_model=ReviewResponse)
 def predict_review(request_data: ReviewRequest):
     """
-    Evaluate a single review text and return its sentiment label.
-    Designed for external CRM inter-service communication.
+    Evaluate a single review text with Confidence-Based Routing.
+    If the custom model is uncertain (< 0.70), routes to DeBERTa-v3 fallback.
+    Returns the sentiment alongside observability metrics.
     """
+    global hf_fallback_cache
+    
     try:
         logger.info("CRM prediction request received.")
         
-        # 1. Load the model (returns CustomAnalyzer wrapper or HF Pipeline)
+        try:
+            # Automatically detect Spanish (or any language) and translate to English
+            processed_text = GoogleTranslator(source='auto', target='en').translate(request_data.text)
+            logger.info(f"Translated input: '{request_data.text}' -> '{processed_text}'")
+        except Exception as e:
+            logger.warning(f"Translation failed: {e}. Proceeding with original text.")
+            processed_text = request_data.text
+        
+        # 1. Load the primary model (often CustomAnalyzer)
         analyzer = load_model()
         
-        # 2. Pass the text directly into the prediction flow
-        # Note: If the HF ABSA model complains about missing aspect tokens in the future, 
-        # you can format it here like: f"[CLS] {request_data.text} [SEP] general [SEP]"
-        raw_result = analyzer(request_data.text)
+        # Initialize default observability metrics
+        model_used = "Unknown"
+        confidence_score = 0.0
         
-        # 3. Extract the label from the returned array structure (e.g., [{'label': 'positive'}])
-        raw_label = raw_result[0]['label']
+        # Determine if we are wrapping the local Scikit-Learn model
+        is_custom_model = hasattr(analyzer, 'model') and hasattr(analyzer, 'vectorizer')
         
-        # 4. Enforce strict capitalization ("Positive", "Negative", "Neutral")
-        sentiment_label = raw_label.strip().capitalize()
-        
-        # Safety enforcement
-        valid_labels = ["Positive", "Negative", "Neutral"]
-        if sentiment_label not in valid_labels:
-            logger.warning(f"Unexpected label '{sentiment_label}' mapped to Neutral.")
-            sentiment_label = "Neutral"
+        if is_custom_model:
+            # 1. Immediately calculate the features vector
+            clean_text = processed_text.replace('[CLS] ', '').replace(' [SEP]', '').split(' [SEP] ')[0]
+            features = analyzer.vectorizer.transform([clean_text])
             
-        return ReviewResponse(sentiment=sentiment_label)
+            # Flag to determine if we escalate to Hugging Face
+            route_to_fallback = False
+            
+            # 2. OOV Check First
+            if features.nnz == 0:
+                logger.warning("Out-of-Vocabulary (OOV) detected: features.nnz == 0. Routing to DeBERTa fallback.")
+                route_to_fallback = True
+            else:
+                # 3. Features exist. Check for probability metrics.
+                if hasattr(analyzer.model, 'predict_proba'):
+                    # Extract the highest probability
+                    probabilities = analyzer.model.predict_proba(features)[0]
+                    confidence = max(probabilities)
+                    
+                    logger.info(f"Custom model confidence scored at: {confidence:.4f}")
+                    
+                    # Threshold Logic
+                    if confidence >= 0.70:
+                        raw_result = analyzer(processed_text)
+                        sentiment_label = raw_result[0]['label']
+                        model_used = "Custom_ScikitLearn"
+                        confidence_score = float(confidence)
+                        logger.info("Confidence optimal. Proceeding with Custom Model prediction.")
+                    else:
+                        logger.warning(f"Low confidence ({confidence:.4f}) detected, routing to DeBERTa fallback.")
+                        route_to_fallback = True
+                else:
+                    # Model lacks predict_proba (Standard SVM), but we know nnz > 0
+                    logger.info("Custom model lacks predict_proba, but recognized vocabulary. Proceeding.")
+                    raw_result = analyzer(processed_text)
+                    sentiment_label = raw_result[0]['label']
+                    model_used = "Custom_ScikitLearn"
+                    confidence_score = 1.0  # Fallback assumption for models lacking proba with recognized inputs
+            
+            # 4. Handle Fallback Execution if flagged
+            if route_to_fallback:
+                # Instantiate / call Hugging Face Pipeline lazily
+                if hf_fallback_cache is None:
+                    logger.info("Initializing Hugging Face Fallback into cache...")
+                    hf_fallback_cache = pipeline(
+                        "text-classification", 
+                        model="yangheng/deberta-v3-base-absa-v1.1",
+                        tokenizer="yangheng/deberta-v3-base-absa-v1.1",
+                        use_fast=False
+                    )
+                
+                # HF ABSA expects an aspect token.
+                fallback_result = hf_fallback_cache(f"[CLS] {processed_text} [SEP] general [SEP]")
+                sentiment_label = fallback_result[0]['label']
+                model_used = "DeBERTa_Fallback"
+                confidence_score = float(fallback_result[0].get('score', 0.0))
+        else:
+            # We are already defaulted to Hugging Face natively because local .joblib files were missing
+            fallback_result = analyzer(f"[CLS] {request_data.text} [SEP] general [SEP]")
+            sentiment_label = fallback_result[0]['label']
+            model_used = "DeBERTa_Fallback"
+            confidence_score = float(fallback_result[0].get('score', 0.0))
+            
+        # --- Contract Enforcement ---
+        final_label = str(sentiment_label).strip().capitalize()
+        
+        valid_labels = ["Positive", "Negative", "Neutral"]
+        if final_label not in valid_labels:
+            logger.warning(f"Unexpected label format '{final_label}' mapped to Neutral.")
+            final_label = "Neutral"
+            
+        return ReviewResponse(
+            sentiment=final_label,
+            model_used=model_used,
+            confidence_score=confidence_score
+        )
         
     except Exception as e:
-        logger.error(f"Error predicting CRM review sentiment: {e}\n{traceback.format_exc()}")
+        logger.error(f"Error predicting CRM review sentiment: {e}")
         raise HTTPException(
             status_code=500, 
-            detail="An internal error occurred during prediction."
+            detail="An internal error occurred during review prediction."
         )
