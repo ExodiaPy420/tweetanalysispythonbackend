@@ -21,3 +21,6 @@ training_log.csv
 
 # NLTK data
 nltk_data/
+
+logs/
+.log

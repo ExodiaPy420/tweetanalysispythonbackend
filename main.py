@@ -48,7 +48,7 @@ def load_model():
                         # Handle pipeline input format (remove [CLS] etc if present)
                         if isinstance(text, str):
                             clean_text = text.replace('[CLS] ', '').replace(' [SEP]', '').split(' [SEP] ')[0]
-                            # Preprocess using the same logic as training would be ideal, 
+                            # Preprocess using the same logic as training would be ideal,
                             # but for now we rely on the vectorizer's preprocessing
                             features = self.vectorizer.transform([clean_text])
                             prediction = self.model.predict(features)[0]
@@ -117,7 +117,6 @@ class AnalysisRequest(BaseModel):
     @validator('query')
     def validate_query(cls, v):
         """Validate and sanitize query input."""
-        # Remove leading/trailing whitespace
         v = v.strip()
         
         # Check not empty after strip
