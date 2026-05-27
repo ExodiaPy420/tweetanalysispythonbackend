@@ -99,7 +99,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
-origins = ["http://localhost:5173", "http://localhost:3000"]
+origins = ["http://localhost:5173", "http://localhost:3000", "https://spyzer-crm.up.railway.app/"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
